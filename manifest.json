@@ -1,0 +1,52 @@
+{
+    "manifest_version": 3,
+    "name": "AI Debate Arena",
+    "version": "1.0",
+    "description": "Orchestrate debates between ChatGPT, Claude, and Gemini in a dedicated arena.",
+    "permissions": [
+        "tabs",
+        "scripting"
+    ],
+    "host_permissions": [
+        "https://chatgpt.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*"
+    ],
+    "content_scripts": [
+        {
+            "matches": [
+                "https://chatgpt.com/*"
+            ],
+            "js": [
+                "content_scripts/chatgpt.js"
+            ]
+        },
+        {
+            "matches": [
+                "https://claude.ai/*"
+            ],
+            "js": [
+                "content_scripts/claude.js"
+            ]
+        },
+        {
+            "matches": [
+                "https://gemini.google.com/*"
+            ],
+            "js": [
+                "content_scripts/gemini.js"
+            ]
+        }
+    ],
+    "background": {
+        "service_worker": "background.js"
+    },
+    "action": {
+        "default_title": "Open Debate Arena"
+    },
+    "icons": {
+        "16": "icons/icon16.png",
+        "48": "icons/icon48.png",
+        "128": "icons/icon128.png"
+    }
+}
