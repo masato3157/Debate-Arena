@@ -1,89 +1,131 @@
-// Claude Adapter
-console.log("AI Debate: Claude Adapter Loaded");
+// Claude Adapter v0.8 (Ultimate Input Edition)
+// 役割：Claudeの画面を操作し、内容を確実に入力して送信する
+console.log("AI Debate: Claude Adapter v0.8");
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    console.log("Claude v0.8: Action ->", request.action);
+
     if (request.action === "CHECK_READY") {
-        sendResponse({ status: "ready", platform: "claude" });
+        sendResponse({ status: "ready", platform: "claude", version: "0.8" });
         return true;
     }
 
     if (request.action === "GENERATE_RESPONSE") {
-        generateResponse(request.prompt).then(response => {
-            sendResponse({ status: "success", response: response });
-        }).catch(error => {
-            sendResponse({ status: "error", message: error.toString() });
-        });
+        console.log("Claude v0.8: Task received. Length:", request.prompt.length);
+        generateResponse(request.prompt, request.requestId)
+            .then(() => {
+                console.log("Claude v0.8: Generation task finished successfully.");
+                sendResponse({ status: "success" });
+            })
+            .catch(error => {
+                console.error("Claude v0.8: Error occurred:", error);
+                sendResponse({ status: "error", message: error.toString() });
+            });
         return true;
     }
 });
 
-async function generateResponse(prompt) {
-    // 1. Find input area
-    // Claude usually uses a contenteditable div
-    const inputArea = document.querySelector('div[contenteditable="true"]');
-    if (!inputArea) throw new Error("Claude input area not found");
+async function generateResponse(prompt, requestId) {
+    // 1. 入力欄
+    const inputArea = document.querySelector('.ql-editor') || 
+                      document.querySelector('div[contenteditable="true"]') ||
+                      document.querySelector('fieldset div[contenteditable]');
+    
+    if (!inputArea) throw new Error("Claudeの入力欄が見つかりません。");
 
-    // 2. Set text
-    inputArea.innerText = prompt;
-    inputArea.dispatchEvent(new Event('input', { bubbles: true }));
-
-    await new Promise(r => setTimeout(r, 500));
-
-    // 3. Click send button
-    // Look for button with aria-label usually
-    const sendButton = document.querySelector('button[aria-label="Send Message"]') || document.querySelector('button[aria-label="Send"]');
-
-    // Sometimes Claude requires Focus
+    // 2. 究極の入力ロジック
+    console.log("Claude v0.8: Inserting text...");
     inputArea.focus();
-
-    if (sendButton) {
-        sendButton.click();
-    } else {
-        // Try hitting Enter?
-        const enterEvent = new KeyboardEvent('keydown', {
-            bubbles: true, cancelable: true, keyCode: 13, key: 'Enter'
-        });
-        inputArea.dispatchEvent(enterEvent);
+    
+    document.execCommand('insertText', false, prompt);
+    
+    await sleep(200);
+    if (!inputArea.innerText.includes(prompt.substring(0, 5))) {
+        inputArea.innerText = prompt;
     }
 
-    // 4. Wait for generation
-    await waitForGeneration();
+    ['input', 'change', 'blur'].forEach(name => {
+        inputArea.dispatchEvent(new Event(name, { bubbles: true }));
+    });
 
-    // 5. Get response
-    return getLastResponse();
-}
+    // 3. 待機 (1.5秒)
+    console.log("Claude v0.8: Waiting for UI to stabilize (1500ms)...");
+    await sleep(1500);
 
-async function waitForGeneration() {
-    await new Promise(r => setTimeout(r, 2000));
+    // 4. 送信ボタン
+    const sendButton = findSendButton();
+    if (!sendButton) throw new Error("Claudeの送信ボタンが見つかりません。");
 
-    return new Promise((resolve) => {
-        const checkInterval = setInterval(() => {
-            // Claude usually provides some indication of "Thinking" or stops "Thinking"
-            // We can check if the input area is back and usable
-            // Or check specifically for the lack of "Stop" button if implemented
+    console.log("Claude v0.8: Clicking send button...");
+    sendButton.click();
 
-            // Strategy: text length of the last message stops changing for X seconds?
-            // Or simply wait for input availability
-            const inputArea = document.querySelector('div[contenteditable="true"]');
-            if (inputArea) {
-                // Claude keeps input area but maybe disabled? 
-                // Let's assume if we can find the send button again (or if it's not disabled)
-                // Rough heuristic
-                resolve();
-                clearInterval(checkInterval);
-            }
-        }, 1000);
+    // 5. 完了待ちとリレー
+    const responseText = await waitForCompleteResponse();
+    
+    chrome.runtime.sendMessage({
+        action: "DIRECT_RELAY_RESPONSE",
+        platform: "claude",
+        response: responseText,
+        requestId: requestId
     });
 }
 
-function getLastResponse() {
-    // Claude's messages usually have a specific class
-    // This selector is a guess and needs verification
-    const messages = document.querySelectorAll('.font-claude-message');
-    if (messages.length === 0) {
-        // Fallback
-        const allDivs = document.querySelectorAll('div.grid');
-        return "Response element selector needs verification.";
+function findSendButton() {
+    const selectors = [
+        'button[aria-label="Send Message"]',
+        'button[aria-label="送信"]',
+        'fieldset button:has(svg)',
+        'button:has(svg path[d*="M12 3"])', // Claudeの送信アイコンの傾向
+        'button.send-padding'
+    ];
+    for (const sel of selectors) {
+        const btn = document.querySelector(sel);
+        if (btn) return btn;
     }
-    return messages[messages.length - 1].innerText;
+    return null;
 }
+
+async function waitForCompleteResponse() {
+    const maxWait = 180000;
+    const start = Date.now();
+    let lastText = "";
+    let stableCount = 0;
+
+    while (Date.now() - start < maxWait) {
+        await sleep(2000);
+        const currentText = getCleanResponse();
+        const isGenerating = !!(document.querySelector('button[aria-label*="Stop"]') || 
+                                document.querySelector('.stream-loading'));
+
+        if (!isGenerating && currentText.length > 10) {
+            if (currentText === lastText) {
+                stableCount++;
+                if (stableCount >= 2) return currentText;
+            } else {
+                stableCount = 0;
+                lastText = currentText;
+            }
+        } else {
+            stableCount = 0;
+        }
+    }
+    return getCleanResponse();
+}
+
+function getCleanResponse() {
+    const els = document.querySelectorAll('.font-claude-message');
+    if (els.length === 0) return "";
+    
+    const last = els[els.length - 1].cloneNode(true);
+    // 思考要素を除去
+    last.querySelectorAll('.font-claude-thought-message, button, .action-buttons').forEach(el => el.remove());
+    
+    let text = last.innerText.trim();
+    // フォールバック: 「完了」「終了」などのキーワード以降が思考の場合のトリミング
+    if (text.includes("完了") && text.length < 500) {
+        text = text.split("完了").pop().trim();
+    }
+    return text;
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }

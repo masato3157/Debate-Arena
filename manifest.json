@@ -1,11 +1,12 @@
 {
     "manifest_version": 3,
     "name": "AI Debate Arena",
-    "version": "1.0",
+    "version": "0.5",
     "description": "Orchestrate debates between ChatGPT, Claude, and Gemini in a dedicated arena.",
     "permissions": [
         "tabs",
-        "scripting"
+        "scripting",
+        "storage"
     ],
     "host_permissions": [
         "https://chatgpt.com/*",

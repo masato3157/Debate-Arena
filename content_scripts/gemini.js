@@ -1,69 +1,128 @@
-// Gemini Adapter
-console.log("AI Debate: Gemini Adapter Loaded");
+// Gemini Adapter v0.8 (Ultimate Input Edition)
+// 役割：Geminiの画面を操作し、内容を確実に入力して送信する
+console.log("AI Debate: Gemini Adapter v0.8");
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    console.log("Gemini v0.8: Action ->", request.action);
+
     if (request.action === "CHECK_READY") {
-        sendResponse({ status: "ready", platform: "gemini" });
+        sendResponse({ status: "ready", platform: "gemini", version: "0.8" });
         return true;
     }
 
     if (request.action === "GENERATE_RESPONSE") {
-        generateResponse(request.prompt).then(response => {
-            sendResponse({ status: "success", response: response });
-        }).catch(error => {
-            sendResponse({ status: "error", message: error.toString() });
-        });
+        console.log("Gemini v0.8: Task received. Length:", request.prompt.length);
+        generateResponse(request.prompt, request.requestId)
+            .then(() => {
+                console.log("Gemini v0.8: Generation task finished successfully.");
+                sendResponse({ status: "success" });
+            })
+            .catch(error => {
+                console.error("Gemini v0.8: Error occurred:", error);
+                sendResponse({ status: "error", message: error.toString() });
+            });
         return true;
     }
 });
 
-async function generateResponse(prompt) {
-    // 1. Find input
-    const inputArea = document.querySelector('div[contenteditable="true"]');
-    // Gemini's input is often a rich textarea
-    if (!inputArea) throw new Error("Gemini input area not found");
+async function generateResponse(prompt, requestId) {
+    // 1. 入力欄の特定
+    const inputArea = document.querySelector('.ql-editor') || 
+                      document.querySelector('div[contenteditable="true"]') ||
+                      document.querySelector('rich-textarea div[contenteditable]');
+    
+    if (!inputArea) throw new Error("Geminiの入力欄が見つかりません。");
 
-    // 2. Set text
-    inputArea.innerText = prompt;
-    inputArea.dispatchEvent(new Event('input', { bubbles: true }));
-
-    await new Promise(r => setTimeout(r, 500));
-
-    // 3. Send
-    const sendButton = document.querySelector('.send-button') || document.querySelector('button[aria-label="Send message"]');
-    if (sendButton) {
-        sendButton.click();
-    } else {
-        // Enter key fallback
-        const enterEvent = new KeyboardEvent('keydown', {
-            bubbles: true, cancelable: true, keyCode: 13, key: 'Enter'
-        });
-        inputArea.dispatchEvent(enterEvent);
+    // 2. 究極の入力ロジック
+    console.log("Gemini v0.8: Inserting text...");
+    inputArea.focus();
+    
+    // a. 標準入力
+    document.execCommand('insertText', false, prompt);
+    
+    // b. フォールバック
+    await sleep(200);
+    if (!inputArea.innerText.includes(prompt.substring(0, 5))) {
+        console.warn("Gemini v0.8: Using direct innerText injection.");
+        inputArea.innerText = prompt;
     }
 
-    // 4. Wait
-    await waitForGeneration();
+    // c. イベント発火
+    ['input', 'change', 'blur'].forEach(name => {
+        inputArea.dispatchEvent(new Event(name, { bubbles: true }));
+    });
 
-    // 5. Get response
-    return getLastResponse();
-}
+    // 3. 待機 (1.5秒)
+    console.log("Gemini v0.8: Waiting for UI to stabilize (1500ms)...");
+    await sleep(1500);
 
-async function waitForGeneration() {
-    await new Promise(r => setTimeout(r, 2000));
-    // Wait until "Response 1" etc handles are done or send button reappears
-    return new Promise((resolve) => {
-        setTimeout(resolve, 5000); // Temporary fixed wait for prototype
+    // 4. 送信ボタン
+    const sendButton = findSendButton();
+    if (!sendButton) throw new Error("Geminiの送信ボタンが見つかりません。");
+
+    console.log("Gemini v0.8: Clicking send button...");
+    sendButton.click();
+
+    // 5. 完了待ちとリレー
+    const responseText = await waitForCompleteResponse();
+    
+    chrome.runtime.sendMessage({
+        action: "DIRECT_RELAY_RESPONSE",
+        platform: "gemini",
+        response: responseText,
+        requestId: requestId
     });
 }
 
-function getLastResponse() {
-    const responses = document.querySelectorAll('model-response');
-    // Gemini tag names might be different
-    if (responses.length === 0) {
-        // Try selecting by class or attribute
-        const chunks = document.querySelectorAll('.model-response-text'); // Guess
-        if (chunks.length > 0) return chunks[chunks.length - 1].innerText;
-        return "No response found (Selector update needed).";
+function findSendButton() {
+    const selectors = [
+        'button[aria-label="メッセージを送信"]',
+        'button[aria-label="Send message"]',
+        'button[aria-label="送信"]',
+        '.send-button-container button',
+        'button[mattooltip*="送信"]'
+    ];
+    for (const sel of selectors) {
+        const btn = document.querySelector(sel);
+        if (btn) return btn;
     }
-    return responses[responses.length - 1].innerText;
+    return null;
 }
+
+async function waitForCompleteResponse() {
+    const maxWait = 180000;
+    const start = Date.now();
+    let lastText = "";
+    let stableCount = 0;
+
+    while (Date.now() - start < maxWait) {
+        await sleep(2000);
+        const currentText = getCleanResponse();
+        const isGenerating = !!(document.querySelector('button[aria-label="Stop"]') || 
+                                document.querySelector('.loading-indicator'));
+
+        if (!isGenerating && currentText.length > 10) {
+            if (currentText === lastText) {
+                stableCount++;
+                if (stableCount >= 2) return currentText;
+            } else {
+                stableCount = 0;
+                lastText = currentText;
+            }
+        } else {
+            stableCount = 0;
+        }
+    }
+    return getCleanResponse();
+}
+
+function getCleanResponse() {
+    const els = document.querySelectorAll('.model-response-text');
+    if (els.length === 0) return "";
+    const last = els[els.length - 1].cloneNode(true);
+    // UIノイズ除去
+    last.querySelectorAll('button, .action-buttons, .draft-selector, [class*="action"]').forEach(el => el.remove());
+    return last.innerText.trim();
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
